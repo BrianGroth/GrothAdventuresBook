@@ -1,0 +1,5 @@
+Open powershell as admin
+Go to the folder
+CD "C:\Users\brian\OneDrive\SkyDrive camera roll\GrothAdventures Book"
+Run:
+powershell -ExecutionPolicy Bypass -File .\BookBuilder.ps1
