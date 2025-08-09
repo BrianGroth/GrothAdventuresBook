@@ -96,68 +96,47 @@ $currentPost = 0
 $missingImageCount = 0
 
 foreach ($year in $postsByYear.Keys | Sort-Object -Descending) {
+
     $yearDir = Join-Path $baseDir $year
     if (-Not (Test-Path $yearDir)) { New-Item -ItemType Directory -Path $yearDir | Out-Null }
 
-    $yearPostData = @()
-
-    $postIndex = 0
+    # Download each article and images if not already present
     foreach ($url in ($postsByYear[$year] | Sort-Object)) {
-        $postIndex++
-        $currentPost++
         $fileName = Sanitize-FileName(($url.TrimEnd('/').Split('/')[-1] + ".html"))
         $outputPath = Join-Path $yearDir $fileName
-
-
-        $title = ""
-        $date = ""
-
         if (-Not (Test-Path $outputPath)) {
-            Write-Host "[$postIndex/$($postsByYear[$year].Count)] Downloading: $url"
+            Write-Host "Downloading: $url"
             try {
                 $page = Invoke-WebRequest -Uri $url -UseBasicParsing
                 $htmlContent = $page.Content
-
                 # Extract <article>
                 if ($htmlContent -match '<article.*?</article>') {
                     $articleHtml = [regex]::Match($htmlContent, '<article.*?</article>', 'Singleline').Value
                 } else { $articleHtml = $htmlContent }
-
                 # Title extraction with fallback
                 $titleMatch = [regex]::Match($articleHtml, '<h1[^>]*>(.*?)</h1>', 'Singleline')
                 if ($titleMatch.Success) {
                     $title = $titleMatch.Groups[1].Value -replace '\s*[-|]\s*Groth Adventures.*$', ''
                     $title = $title.Trim()
                 } else {
-                    # Fallback: try <title> tag
                     $titleTag = [regex]::Match($htmlContent, '<title>(.*?)</title>', 'Singleline')
                     if ($titleTag.Success) {
-                        $title = $titleTag.Groups[1].Value -replace '\s*[-|]\s*Groth Adventures.*$', ''
-                        $title = $title.Trim()
+                        $title = $titleTag.Groups[1].Value.Trim()
                     } else {
                         $title = $fileName -replace '.html$', ''
                     }
                 }
-
                 # Date from URL
                 if ($url -match "/(\d{4})/(\d{2})/(\d{2})/") {
                     $date = "$($matches[1])-$($matches[2])-$($matches[3])"
                 } else {
-                    # Fallback: try to extract from content
-                    $dateMatch = [regex]::Match($articleHtml, '(\d{4})-(\d{2})-(\d{2})')
-                    if ($dateMatch.Success) {
-                        $date = $dateMatch.Value
-                    } else {
-                        $date = ""
-                    }
+                    $date = ""
                 }
-
                 # Strip extras
                 $articleHtml = [regex]::Replace($articleHtml, '<(section|div)[^>]*(id|class)="[^"]*archives[^"]*"[^>]*>.*?</\1>', '', 'Singleline,IgnoreCase')
                 $articleHtml = [regex]::Replace($articleHtml, '<(aside|div)[^>]*(id|class)="[^"]*(sidebar|widget)[^"]*"[^>]*>.*?</\1>', '', 'Singleline,IgnoreCase')
                 $articleHtml = [regex]::Replace($articleHtml, '<div id="jp-post-flair".*$', '', 'Singleline,IgnoreCase')
                 $articleHtml = [regex]::Replace($articleHtml, '<script.*?</script>', '', 'Singleline,IgnoreCase')
-
                 # Download images
                 $imageUrls = Select-String -InputObject $articleHtml -Pattern '<img[^>]+src="([^"]+)"' -AllMatches |
                              ForEach-Object { $_.Matches.Groups[1].Value } | Sort-Object -Unique
@@ -186,7 +165,6 @@ foreach ($year in $postsByYear.Keys | Sort-Object -Descending) {
                     }
                     $articleHtml = $articleHtml -replace [Regex]::Escape($imgUrl), $imgFileName
                 }
-
                 # Save article HTML
                 $cleanHtml = @"
 <!DOCTYPE html>
@@ -212,27 +190,33 @@ $articleHtml
             } catch {
                 Write-Host "    Failed to download: $url"
             }
-        } else {
-            # Read existing file for title/date with fallback
-            $localContent = Get-Content $outputPath -Raw
-            $titleMatch = [regex]::Match($localContent, '<h1.*?>(.*?)</h1>', 'Singleline')
-            if ($titleMatch.Success) {
-                $title = $titleMatch.Groups[1].Value.Trim()
-            } else {
-                $title = $fileName -replace '.html$', ''
-            }
-            $dateMatch = [regex]::Match($localContent, '<h2 class="date">(.*?)</h2>', 'Singleline')
-            if ($dateMatch.Success) {
-                $date = $dateMatch.Groups[1].Value
-            } else {
-                $date = ""
-            }
         }
+    }
+}
 
+# After all years' articles are downloaded, build TOCs from local files
+foreach ($year in $postsByYear.Keys | Sort-Object -Descending) {
+    $yearDir = Join-Path $baseDir $year
+    $yearPostData = @()
+    $localFiles = Get-ChildItem -Path $yearDir -Filter *.html | Where-Object { $_.Name -ne 'TOC.html' }
+    foreach ($file in $localFiles) {
+        $localContent = Get-Content $file.FullName -Raw
+        $titleTag = [regex]::Match($localContent, '<title>(.*?)</title>', 'Singleline')
+        if ($titleTag.Success) {
+            $title = $titleTag.Groups[1].Value.Trim()
+        } else {
+            $title = $file.BaseName
+        }
+        $dateMatch = [regex]::Match($localContent, '<h2 class="date">(.*?)</h2>', 'Singleline')
+        if ($dateMatch.Success) {
+            $date = $dateMatch.Groups[1].Value
+        } else {
+            $date = ""
+        }
         $yearPostData += [pscustomobject]@{
             Title = $title
             Date  = $date
-            File  = $fileName
+            File  = $file.Name
         }
 
         # Topic matching
@@ -242,11 +226,13 @@ $articleHtml
                 $topicMatches[$topic] += [pscustomobject]@{
                     Title   = $title
                     DateStr = $date
-                    FileRef = "../$year/$fileName"
+                    FileRef = "../$year/$($file.Name)"
                 }
             }
         }
     }
+
+    # Separate dated/undated for TOC
 
     # Separate dated/undated for TOC
     $dated   = $yearPostData | Where-Object { $_.Date -match '^\d{4}-\d{2}-\d{2}$' } | Sort-Object @{Expression={ [datetime]$_.Date }; Ascending=$true}
