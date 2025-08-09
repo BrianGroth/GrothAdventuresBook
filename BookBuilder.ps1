@@ -81,11 +81,11 @@ $topics = @(
     # Cities
     "Seattle","Madrid","Lisbon","Amsterdam","London","Paris","Rome","Tokyo","Kyoto","Florence","Venice",
     "Barcelona","Dublin","Edinburgh","Sydney","Melbourne","Vancouver","Prague","Budapest","Vienna","Berlin",
-    "Munich","Geneva","Zurich","Istanbul","Athens",
+    "Munich","Geneva","Zurich","Istanbul","Hong Kong","Singapore","Bangkok",
     # People
     "Brian","Lorie","Anne","Mom","Dad","Uncle","Aunt","Chris","Steve","Karen","John","Mary",
     # Pets
-    "Ripley","Theo","Milo","Busby","Piper","Sam","Coco","Charlie","Max","Bella"
+    "Ripley","Theo","Milo","Busby","Piper","Sam"
 )
 
 $topicMatches = @{}
@@ -108,6 +108,7 @@ foreach ($year in $postsByYear.Keys | Sort-Object -Descending) {
         $fileName = Sanitize-FileName(($url.TrimEnd('/').Split('/')[-1] + ".html"))
         $outputPath = Join-Path $yearDir $fileName
 
+
         $title = ""
         $date = ""
 
@@ -122,14 +123,33 @@ foreach ($year in $postsByYear.Keys | Sort-Object -Descending) {
                     $articleHtml = [regex]::Match($htmlContent, '<article.*?</article>', 'Singleline').Value
                 } else { $articleHtml = $htmlContent }
 
-                # Title
+                # Title extraction with fallback
                 $titleMatch = [regex]::Match($articleHtml, '<h1[^>]*>(.*?)</h1>', 'Singleline')
-                $title = $titleMatch.Groups[1].Value -replace '\s*[-|]\s*Groth Adventures.*$', ''
-                $title = $title.Trim()
+                if ($titleMatch.Success) {
+                    $title = $titleMatch.Groups[1].Value -replace '\s*[-|]\s*Groth Adventures.*$', ''
+                    $title = $title.Trim()
+                } else {
+                    # Fallback: try <title> tag
+                    $titleTag = [regex]::Match($htmlContent, '<title>(.*?)</title>', 'Singleline')
+                    if ($titleTag.Success) {
+                        $title = $titleTag.Groups[1].Value -replace '\s*[-|]\s*Groth Adventures.*$', ''
+                        $title = $title.Trim()
+                    } else {
+                        $title = $fileName -replace '.html$', ''
+                    }
+                }
 
                 # Date from URL
                 if ($url -match "/(\d{4})/(\d{2})/(\d{2})/") {
                     $date = "$($matches[1])-$($matches[2])-$($matches[3])"
+                } else {
+                    # Fallback: try to extract from content
+                    $dateMatch = [regex]::Match($articleHtml, '(\d{4})-(\d{2})-(\d{2})')
+                    if ($dateMatch.Success) {
+                        $date = $dateMatch.Value
+                    } else {
+                        $date = ""
+                    }
                 }
 
                 # Strip extras
@@ -193,10 +213,20 @@ $articleHtml
                 Write-Host "    Failed to download: $url"
             }
         } else {
-            # Read existing file for title/date
+            # Read existing file for title/date with fallback
             $localContent = Get-Content $outputPath -Raw
-            $title = [regex]::Match($localContent, '<h1.*?>(.*?)</h1>', 'Singleline').Groups[1].Value.Trim()
-            $date = [regex]::Match($localContent, '<h2 class="date">(.*?)</h2>', 'Singleline').Groups[1].Value
+            $titleMatch = [regex]::Match($localContent, '<h1.*?>(.*?)</h1>', 'Singleline')
+            if ($titleMatch.Success) {
+                $title = $titleMatch.Groups[1].Value.Trim()
+            } else {
+                $title = $fileName -replace '.html$', ''
+            }
+            $dateMatch = [regex]::Match($localContent, '<h2 class="date">(.*?)</h2>', 'Singleline')
+            if ($dateMatch.Success) {
+                $date = $dateMatch.Groups[1].Value
+            } else {
+                $date = ""
+            }
         }
 
         $yearPostData += [pscustomobject]@{
