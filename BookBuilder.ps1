@@ -142,18 +142,29 @@ foreach ($year in $postsByYear.Keys | Sort-Object -Descending) {
                              ForEach-Object { $_.Matches.Groups[1].Value } | Sort-Object -Unique
                 foreach ($imgUrl in $imageUrls) {
                     $finalUrl = $imgUrl
-                    if ($finalUrl.StartsWith("/")) { $finalUrl = "https://grothadventures.com$finalUrl" }
-                    $imgFileName = Sanitize-FileName ([System.IO.Path]::GetFileName($finalUrl))
+                    # Handle all relative URLs
+                    if ($finalUrl -notmatch '^https?://') {
+                        if ($finalUrl.StartsWith("/")) {
+                            $finalUrl = "https://grothadventures.com$finalUrl"
+                        } else {
+                            $finalUrl = "https://grothadventures.com/$finalUrl"
+                        }
+                    }
+                    # Remove query string for filename
+                    $imgFileName = $finalUrl.Split("/")[-1].Split("?")[0]
+                    $imgFileName = Sanitize-FileName $imgFileName
                     $imgLocalPath = Join-Path $yearDir $imgFileName
                     if (-Not (Test-Path $imgLocalPath)) {
                         try {
                             Invoke-WebRequest -Uri $finalUrl -OutFile $imgLocalPath -UseBasicParsing
                         } catch {
+                            Write-Host "    Failed to download image: $finalUrl"
                             if ($imgFileName -match '-\d+x\d+(\.\w+)$') {
                                 $fullSizeUrl = $finalUrl -replace '-\d+x\d+(\.\w+)$', '$1'
                                 try {
                                     Invoke-WebRequest -Uri $fullSizeUrl -OutFile $imgLocalPath -UseBasicParsing
                                 } catch {
+                                    Write-Host "    Also failed to download full-size image: $fullSizeUrl"
                                     Add-Content -Path $missingImagesLog -Value $finalUrl
                                     $missingImageCount++
                                 }
